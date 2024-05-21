@@ -123,6 +123,7 @@ if(OMNITRACE_USE_HIP
     find_package(ROCmVersion)
 
     if(NOT ROCmVersion_FOUND)
+        message("1) ROCmVersion_FOUND = ${ROCmVersion_FOUND}")
         find_package(hip ${omnitrace_FIND_QUIETLY} REQUIRED HINTS
                      ${OMNITRACE_DEFAULT_ROCM_PATH} PATHS ${OMNITRACE_DEFAULT_ROCM_PATH})
         if(SPACK_BUILD)
@@ -133,8 +134,8 @@ if(OMNITRACE_USE_HIP
     endif()
 
     if(NOT ROCmVersion_FOUND)
+        message("2) ROCmVersion_FOUND = ${ROCmVersion_FOUND}")
         rocm_version_compute("${hip_VERSION}" _local)
-
         foreach(_V ${ROCmVersion_VARIABLES})
             set(_CACHE_VAR ROCmVersion_${_V}_VERSION)
             set(_LOCAL_VAR _local_${_V}_VERSION)
@@ -169,6 +170,15 @@ else()
     set(OMNITRACE_HIP_VERSION_MINOR 0)
     set(OMNITRACE_HIP_VERSION_PATCH 0)
 endif()
+
+message(STATUS "*** Omnitrace Debug - ROCm Version Info ***")
+message(STATUS "ROCmVersion_FOUND = ${ROCmVersion_FOUND}")
+message(STATUS "ROCm Version: ${OMNITRACE_ROCM_VERSION}")
+message(STATUS "HIP Version: ${OMNITRACE_HIP_VERSION}")
+message(STATUS "HIP Version Major: ${OMNITRACE_HIP_VERSION_MAJOR}"
+               " Minor: ${OMNITRACE_HIP_VERSION_MINOR}"
+               " Patch: ${OMNITRACE_HIP_VERSION_PATCH}")
+message(STATUS "ROCm Path: ${ROCM_PATH}")
 
 # ----------------------------------------------------------------------------------------#
 #
