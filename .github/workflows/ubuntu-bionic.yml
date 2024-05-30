@@ -1,12 +1,11 @@
-name: OpenSUSE 15 (GCC, Python)
-run-name: opensuse-15
+name: Ubuntu 18.04 (GCC, MPICH, Python)
+run-name: ubuntu-bionic
 
 on:
   push:
-    branches: [ amd-mainline, amd-staging, release/** ]
+    branches: [ main, develop ]
     paths-ignore:
       - '*.md'
-      - 'docs/**'
       - 'source/docs/**'
       - 'source/python/gui/**'
       - '.github/workflows/docs.yml'
@@ -15,10 +14,9 @@ on:
       - '.github/workflows/formatting.yml'
       - 'docker/**'
   pull_request:
-    branches: [ amd-mainline, amd-staging, release/** ]
+    branches: [ main, develop ]
     paths-ignore:
       - '*.md'
-      - 'docs/**'
       - 'source/docs/**'
       - 'source/python/gui/**'
       - '.github/workflows/docs.yml'
@@ -32,38 +30,64 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  BUILD_TYPE: Release
   OMNITRACE_CI: ON
+  GIT_DISCOVERY_ACROSS_FILESYSTEM: 1
   OMNITRACE_TMPDIR: "%env{PWD}%/testing-tmp"
 
 jobs:
-  opensuse:
-    runs-on: ubuntu-20.04
+  ubuntu-bionic:
+    runs-on: ubuntu-latest
     container:
-      image: jrmadsen/omnitrace:ci-base-opensuse-${{ matrix.os-release }}
+      image: jrmadsen/omnitrace:ci-base-ubuntu-18.04
     strategy:
       fail-fast: false
       matrix:
-        compiler: ['g++']
-        os-release: [ '15.3', '15.4' ]
-        build-type: ['Release']
+        compiler: ['g++-7', 'g++-8']
+        mpi: [ 'nompi', 'mpich' ]
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Patch Git
+      timeout-minutes: 25
+      run: |
+        apt-get update
+        apt-get install -y software-properties-common
+        add-apt-repository -y ppa:git-core/ppa
+        apt-get update
+        apt-get upgrade -y
+        apt-get install -y git
+
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
 
     - name: Install Packages
       timeout-minutes: 25
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v2
       with:
         retry_wait_seconds: 30
         timeout_minutes: 25
         max_attempts: 5
         command: |
-          wget https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v46.0/linux-amd64/trace_processor_shell -P /opt/trace_processor/bin &&
-          chmod +x /opt/trace_processor/bin/trace_processor_shell
+          apt-get update &&
+          apt-get upgrade -y &&
+          apt-get install -y build-essential m4 autoconf libtool python3-pip ${{ matrix.compiler }} &&
+          if [ "${{ matrix.mpi }}" = "mpich" ]; then apt-get install -y libmpich-dev mpich; fi &&
+          if [ "${{ matrix.mpi }}" = "openmpi" ]; then apt-get install -y libopenmpi-dev openmpi-bin libfabric-dev; fi &&
           python3 -m pip install --upgrade pip &&
-          python3 -m pip install numpy perfetto dataclasses &&
-          python3 -m pip install 'cmake==3.21.4' &&
+          python3 -m pip install numpy &&
+          python3 -m pip install perfetto &&
+          python3 -m pip install 'cmake==3.16.3' &&
           for i in 6 7 8 9 10; do /opt/conda/envs/py3.${i}/bin/python -m pip install numpy perfetto dataclasses; done
+
+    - name: Install Kokkos
+      timeout-minutes: 10
+      run:
+        cd examples/lulesh/external/kokkos &&
+        cmake -B build -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_STANDARD=17 . &&
+        cmake --build build --target all --parallel 2 &&
+        cmake --build build --target install &&
+        rm -rf build
 
     - name: Configure Env
       run:
@@ -78,31 +102,30 @@ jobs:
       run:
         git config --global --add safe.directory ${PWD} &&
         cmake --version &&
+        if [ "${{ matrix.mpi }}" = "nompi" ]; then USE_MPI=OFF; else USE_MPI=ON; fi &&
+        append-tagname() { if [ "${1}" == "ON" ]; then TAG="${TAG}-${2}"; fi; } &&
         python3 ./scripts/run-ci.py -B build
-          --name ${{ github.repository_owner }}-${{ github.ref_name }}-opensuse-${{ matrix.os-release }}-${{ matrix.compiler }}-nompi-python
+          --name ${{ github.repository_owner }}-${{ github.ref_name }}-ubuntu-bionic-${{ matrix.compiler }}-${{ matrix.mpi }}-python
           --build-jobs 2
           --site GitHub
           --
           -DCMAKE_C_COMPILER=$(echo '${{ matrix.compiler }}' | sed 's/+/c/g')
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build-type }}
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
           -DCMAKE_INSTALL_PREFIX=/opt/omnitrace
           -DOMNITRACE_BUILD_TESTING=ON
-          -DOMNITRACE_USE_MPI=OFF
+          -DOMNITRACE_BUILD_DYNINST=OFF
+          -DOMNITRACE_USE_MPI=${USE_MPI}
           -DOMNITRACE_USE_ROCM=OFF
-          -DOMNITRACE_USE_OMPT=OFF
           -DOMNITRACE_USE_PYTHON=ON
-          -DOMNITRACE_INSTALL_PERFETTO_TOOLS=OFF
-          -DOMNITRACE_USE_MPI_HEADERS=ON
           -DOMNITRACE_PYTHON_PREFIX=/opt/conda/envs
           -DOMNITRACE_PYTHON_ENVS="py3.6;py3.7;py3.8;py3.9;py3.10;py3.11"
-          -DOMNITRACE_CI_MPI_RUN_AS_ROOT=ON
+          -DLULESH_BUILD_KOKKOS=OFF
           -DOMNITRACE_MAX_THREADS=64
           -DOMNITRACE_DISABLE_EXAMPLES="transpose;rccl"
           -DOMNITRACE_BUILD_NUMBER=${{ github.run_attempt }}
 
     - name: Install
-      timeout-minutes: 10
       run:
         cmake --build build --target install --parallel 2
 
